@@ -18,8 +18,8 @@ class RBFVolatilitySurface:
         - coefficients: Array of RBF coefficients ω_j.
         - maturity_times: Array of RBF centers for time to maturity T_j.
         - strike_prices: Array of RBF centers for strike price K_j.
-        - strike_std: Standard deviation (spread) for strike prices in the RBF.
         - maturity_std: Standard deviation (spread) for time to maturity in the RBF.
+        - strike_std: Standard deviation (spread) for strike prices in the RBF.
         - constant_volatility: Constant term φ_0 representing the weighted average of Black-Scholes implied volatilities.
         """
         self.coefficients = np.array(coefficients)

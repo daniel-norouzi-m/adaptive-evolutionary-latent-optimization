@@ -8,8 +8,8 @@ class RBFQuadraticSmoothnessPrior:
         self,
         maturity_times,
         strike_prices,
-        sigma_t,
-        sigma_k,
+        maturity_std,
+        strike_std,
         n_roots,
         gamma,
         random_state=None,
@@ -20,16 +20,16 @@ class RBFQuadraticSmoothnessPrior:
         Parameters:
         - maturity_times: Array of maturity times T_j.
         - strike_prices: Array of strike prices K_j.
-        - sigma_t: Standard deviation for time to maturity.
-        - sigma_k: Standard deviation for strike prices.
+        - maturity_std: Standard deviation for time to maturity.
+        - strike_std: Standard deviation for strike prices.
         - n_roots: Number of roots for Generalized Gauss-Laguerre Quadrature.
         - gamma: Smoothness control parameter.
         - random_state: Random seed for reproducibility.
         """
         self.maturity_times = np.array(maturity_times)
         self.strike_prices = np.array(strike_prices)
-        self.sigma_t = sigma_t
-        self.sigma_k = sigma_k
+        self.maturity_std = maturity_std
+        self.strike_std = strike_std
         self.n_roots = n_roots
         self.gamma = gamma
         self.random_generator = np.random.default_rng(random_state)
@@ -57,10 +57,10 @@ class RBFQuadraticSmoothnessPrior:
         - t_j, k_j: Centers of the RBFs for maturity and strike for the first RBF.
         - t_k, k_k: Centers of the RBFs for maturity and strike for the second RBF.
         """
-        term_1 = ((k - k_j) ** 2 / self.sigma_k ** 4 - 1 / self.sigma_k ** 2) * (
-            (k - k_k) ** 2 / self.sigma_k ** 4 - 1 / self.sigma_k ** 2
+        term_1 = ((k - k_j) ** 2 / self.strike_std ** 4 - 1 / self.strike_std ** 2) * (
+            (k - k_k) ** 2 / self.strike_std ** 4 - 1 / self.strike_std ** 2
         )
-        term_2 = ((t - t_j) * (t - t_k)) / self.sigma_t**4
+        term_2 = ((t - t_j) * (t - t_k)) / self.maturity_std**4
         return term_1 + term_2
 
     def calculate_lambda_matrix(self):
@@ -80,8 +80,8 @@ class RBFQuadraticSmoothnessPrior:
 
                 # Exponential factor in the lambda matrix formula
                 exp_factor = np.exp(
-                    -(delta_t ** 2) / (4 * self.sigma_t ** 2)
-                    - delta_k ** 2 / (4 * self.sigma_k ** 2)
+                    -(delta_t ** 2) / (4 * self.maturity_std ** 2)
+                    - delta_k ** 2 / (4 * self.strike_std ** 2)
                 )
 
                 # Average points for the RBFs
@@ -92,10 +92,10 @@ class RBFQuadraticSmoothnessPrior:
                 integral_sum = 0.0
                 for i in range(self.n_roots):
                     for m in range(self.n_roots):
-                        t_val_pos = t_avg + self.sigma_t * np.sqrt(self.roots[i])
-                        t_val_neg = t_avg - self.sigma_t * np.sqrt(self.roots[i])
-                        k_val_pos = k_avg + self.sigma_k * np.sqrt(self.roots[m])
-                        k_val_neg = k_avg - self.sigma_k * np.sqrt(self.roots[m])
+                        t_val_pos = t_avg + self.maturity_std * np.sqrt(self.roots[i])
+                        t_val_neg = t_avg - self.maturity_std * np.sqrt(self.roots[i])
+                        k_val_pos = k_avg + self.strike_std * np.sqrt(self.roots[m])
+                        k_val_neg = k_avg - self.strike_std * np.sqrt(self.roots[m])
 
                         # Compute Ψ(T, K) with transformed variables
                         psi_val = (
@@ -139,7 +139,7 @@ class RBFQuadraticSmoothnessPrior:
                         )
 
                 lambda_matrix[j, k] = (
-                    exp_factor * self.sigma_t * self.sigma_k / 4 * integral_sum
+                    exp_factor * self.maturity_std * self.strike_std / 4 * integral_sum
                 )
 
                 if j != k:
