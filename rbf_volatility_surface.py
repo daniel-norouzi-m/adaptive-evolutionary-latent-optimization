@@ -4,11 +4,11 @@ import numpy as np
 class RBFVolatilitySurface:
     def __init__(
         self,
-        coefficients,
-        maturity_times,
-        strike_prices,
-        strike_std,
-        maturity_std,
+        coefficients=None,
+        maturity_times=None,
+        strike_prices=None,
+        strike_std=None,
+        maturity_std=None,
         constant_volatility=None,
     ):
         """

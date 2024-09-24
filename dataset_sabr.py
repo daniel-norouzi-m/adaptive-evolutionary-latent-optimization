@@ -2,9 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
-"""
-now give me a jupyter notebook source code to copy, that uses `from dataset_sabr import generate_sabr_call_options` function and the maturity_times, strike_prices from the before code, risk free rate of np.log(1.02), underlying price of 1 and 
-"""
+
 def generate_sabr_call_options(
     alpha,
     beta,
@@ -133,10 +131,10 @@ def generate_sabr_call_options(
 
     # Create a DataFrame with the results
     data = {
-        "time_to_maturity": times_to_maturity,
-        "strike_price": strikes,
-        "call_option_price": call_prices,
-        "implied_volatility": implied_volatilities,
+        "Time to Maturity": times_to_maturity,
+        "Strike Price": strikes,
+        "Call Option Price": call_prices,
+        "Implied Volatility": implied_volatilities,
     }
 
     return pd.DataFrame(data)

@@ -60,7 +60,7 @@ class RBFQuadraticSmoothnessPrior:
         term_1 = ((k - k_j) ** 2 / self.strike_std ** 4 - 1 / self.strike_std ** 2) * (
             (k - k_k) ** 2 / self.strike_std ** 4 - 1 / self.strike_std ** 2
         )
-        term_2 = ((t - t_j) * (t - t_k)) / self.maturity_std**4
+        term_2 = ((t - t_j) * (t - t_k)) / self.maturity_std ** 4
         return term_1 + term_2
 
     def calculate_lambda_matrix(self):
@@ -97,9 +97,12 @@ class RBFQuadraticSmoothnessPrior:
                         k_val_pos = k_avg + self.strike_std * np.sqrt(self.roots[m])
                         k_val_neg = k_avg - self.strike_std * np.sqrt(self.roots[m])
 
-                        # Compute Ψ(T, K) with transformed variables
-                        psi_val = (
-                            self.compute_psi(
+                        # Initialize psi_val to 0
+                        psi_val = 0.0
+
+                        # Compute Ψ(T, K) only when T and K are non-negative
+                        if t_val_pos >= 0 and k_val_pos >= 0:
+                            psi_val += self.compute_psi(
                                 t_val_pos,
                                 k_val_pos,
                                 self.maturity_times[j],
@@ -107,7 +110,9 @@ class RBFQuadraticSmoothnessPrior:
                                 self.maturity_times[k],
                                 self.strike_prices[k],
                             )
-                            - self.compute_psi(
+
+                        if t_val_pos >= 0 and k_val_neg >= 0:
+                            psi_val -= self.compute_psi(
                                 t_val_pos,
                                 k_val_neg,
                                 self.maturity_times[j],
@@ -115,7 +120,9 @@ class RBFQuadraticSmoothnessPrior:
                                 self.maturity_times[k],
                                 self.strike_prices[k],
                             )
-                            - self.compute_psi(
+
+                        if t_val_neg >= 0 and k_val_pos >= 0:
+                            psi_val -= self.compute_psi(
                                 t_val_neg,
                                 k_val_pos,
                                 self.maturity_times[j],
@@ -123,7 +130,9 @@ class RBFQuadraticSmoothnessPrior:
                                 self.maturity_times[k],
                                 self.strike_prices[k],
                             )
-                            + self.compute_psi(
+
+                        if t_val_neg >= 0 and k_val_neg >= 0:
+                            psi_val += self.compute_psi(
                                 t_val_neg,
                                 k_val_neg,
                                 self.maturity_times[j],
@@ -131,7 +140,6 @@ class RBFQuadraticSmoothnessPrior:
                                 self.maturity_times[k],
                                 self.strike_prices[k],
                             )
-                        )
 
                         integral_sum += (
                             self.weights[i] * self.weights[m] * psi_val / \
