@@ -37,8 +37,9 @@ class RBFQuadraticSmoothnessPrior:
         # Precompute the roots and weights for the generalized Gauss-Laguerre quadrature with α = -1/2
         self.roots, self.weights = roots_genlaguerre(self.n_roots, -0.5)
 
-        # Initialize covariance matrix placeholder
+        # Initialize covariance and lambda matrix placeholder
         self.covariance_matrix = None
+        self.lambda_matrix = None
 
     def compute_psi(
         self, 
@@ -88,64 +89,89 @@ class RBFQuadraticSmoothnessPrior:
                 t_avg = (self.maturity_times[j] + self.maturity_times[k]) / 2
                 k_avg = (self.strike_prices[j] + self.strike_prices[k]) / 2
 
-                # Gauss-Laguerre quadrature integration
-                integral_sum = 0.0
-                for i in range(self.n_roots):
-                    for m in range(self.n_roots):
-                        t_val_pos = t_avg + self.maturity_std * np.sqrt(self.roots[i])
-                        t_val_neg = t_avg - self.maturity_std * np.sqrt(self.roots[i])
-                        k_val_pos = k_avg + self.strike_std * np.sqrt(self.roots[m])
-                        k_val_neg = k_avg - self.strike_std * np.sqrt(self.roots[m])
+                # Vectorized Gauss-Laguerre quadrature integration
+                t_sqrt_roots = np.sqrt(self.roots) * self.maturity_std  # Precompute sqrt(roots) * maturity_std
+                k_sqrt_roots = np.sqrt(self.roots) * self.strike_std  # Precompute sqrt(roots) * strike_std
 
-                        # Initialize psi_val to 0
-                        psi_val = 0.0
+                # Generate all possible combinations of t_val_pos, t_val_neg, k_val_pos, k_val_neg
+                t_vals_pos = t_avg + t_sqrt_roots
+                t_vals_neg = t_avg - t_sqrt_roots
+                k_vals_pos = k_avg + k_sqrt_roots
+                k_vals_neg = k_avg - k_sqrt_roots
 
-                        # Compute Ψ(T, K) only when T and K are non-negative
-                        if t_val_pos >= 0 and k_val_pos >= 0:
-                            psi_val += self.compute_psi(
-                                t_val_pos,
-                                k_val_pos,
-                                self.maturity_times[j],
-                                self.strike_prices[j],
-                                self.maturity_times[k],
-                                self.strike_prices[k],
-                            )
+                # Initialize psi_vals for all combinations and apply conditions
+                psi_vals = np.zeros((self.n_roots, self.n_roots, 4))
 
-                        if t_val_pos >= 0 and k_val_neg >= 0:
-                            psi_val -= self.compute_psi(
-                                t_val_pos,
-                                k_val_neg,
-                                self.maturity_times[j],
-                                self.strike_prices[j],
-                                self.maturity_times[k],
-                                self.strike_prices[k],
-                            )
+                # First combination: t_val_pos, k_val_pos
+                mask_pos_pos = (t_vals_pos[:, np.newaxis] >= 0) & (k_vals_pos[np.newaxis, :] >= 0)
+                psi_vals[:, :, 0] = np.where(
+                    mask_pos_pos,
+                    self.compute_psi(
+                        t_vals_pos[:, np.newaxis],
+                        k_vals_pos[np.newaxis, :],
+                        self.maturity_times[j],
+                        self.strike_prices[j],
+                        self.maturity_times[k],
+                        self.strike_prices[k]
+                    ),
+                    0
+                )
 
-                        if t_val_neg >= 0 and k_val_pos >= 0:
-                            psi_val -= self.compute_psi(
-                                t_val_neg,
-                                k_val_pos,
-                                self.maturity_times[j],
-                                self.strike_prices[j],
-                                self.maturity_times[k],
-                                self.strike_prices[k],
-                            )
+                # Second combination: t_val_pos, k_val_neg
+                mask_pos_neg = (t_vals_pos[:, np.newaxis] >= 0) & (k_vals_neg[np.newaxis, :] >= 0)
+                psi_vals[:, :, 1] = np.where(
+                    mask_pos_neg,
+                    self.compute_psi(
+                        t_vals_pos[:, np.newaxis],
+                        k_vals_neg[np.newaxis, :],
+                        self.maturity_times[j],
+                        self.strike_prices[j],
+                        self.maturity_times[k],
+                        self.strike_prices[k]
+                    ),
+                    0
+                )
 
-                        if t_val_neg >= 0 and k_val_neg >= 0:
-                            psi_val += self.compute_psi(
-                                t_val_neg,
-                                k_val_neg,
-                                self.maturity_times[j],
-                                self.strike_prices[j],
-                                self.maturity_times[k],
-                                self.strike_prices[k],
-                            )
+                # Third combination: t_val_neg, k_val_pos
+                mask_neg_pos = (t_vals_neg[:, np.newaxis] >= 0) & (k_vals_pos[np.newaxis, :] >= 0)
+                psi_vals[:, :, 2] = np.where(
+                    mask_neg_pos,
+                    self.compute_psi(
+                        t_vals_neg[:, np.newaxis],
+                        k_vals_pos[np.newaxis, :],
+                        self.maturity_times[j],
+                        self.strike_prices[j],
+                        self.maturity_times[k],
+                        self.strike_prices[k]
+                    ),
+                    0
+                )
 
-                        integral_sum += (
-                            self.weights[i] * self.weights[m] * psi_val / \
-                                np.sqrt(self.roots[i] * self.roots[m])
-                        )
+                # Fourth combination: t_val_neg, k_val_neg
+                mask_neg_neg = (t_vals_neg[:, np.newaxis] >= 0) & (k_vals_neg[np.newaxis, :] >= 0)
+                psi_vals[:, :, 3] = np.where(
+                    mask_neg_neg,
+                    self.compute_psi(
+                        t_vals_neg[:, np.newaxis],
+                        k_vals_neg[np.newaxis, :],
+                        self.maturity_times[j],
+                        self.strike_prices[j],
+                        self.maturity_times[k],
+                        self.strike_prices[k]
+                    ),
+                    0
+                )
 
+                # Compute psi_val by summing and subtracting according to the original logic
+                psi_val_combined = psi_vals[:, :, 0] - psi_vals[:, :, 1] - psi_vals[:, :, 2] + psi_vals[:, :, 3]
+
+                # Compute the integral sum
+                integral_sum = np.sum(
+                    self.weights[:, np.newaxis] * self.weights[np.newaxis, :] * psi_val_combined / \
+                    np.sqrt(self.roots[:, np.newaxis] * self.roots[np.newaxis, :])
+                )
+
+                # Update the lambda matrix
                 lambda_matrix[j, k] = (
                     exp_factor * self.maturity_std * self.strike_std / 4 * integral_sum
                 )
@@ -153,7 +179,23 @@ class RBFQuadraticSmoothnessPrior:
                 if j != k:
                     lambda_matrix[k, j] = lambda_matrix[j, k]  # Use symmetry
 
-        return lambda_matrix
+        lambda_matrix[lambda_matrix < 1e-12] = 0
+        lambda_matrix += 1e-6 * np.eye(lambda_matrix.shape[0])
+
+        # Eigenvalue decomposition
+        eigvals, eigvecs = np.linalg.eigh(lambda_matrix)
+
+        # Clip negative eigenvalues to zero
+        eigvals_clipped = np.clip(eigvals, a_min=0, a_max=None)
+
+        # Reconstruct the matrix with the clipped eigenvalues
+        lambda_matrix_positive = eigvecs @ np.diag(eigvals_clipped) @ eigvecs.T
+        lambda_matrix_positive += 1e-6 * np.eye(lambda_matrix_positive.shape[0])
+        lambda_matrix_positive = (lambda_matrix_positive + lambda_matrix_positive.T) / 2  # Ensure symmetry
+
+        self.lambda_matrix = lambda_matrix_positive            
+
+        return self.lambda_matrix    
 
     def prior_covariance(self):
         """
@@ -162,10 +204,14 @@ class RBFQuadraticSmoothnessPrior:
         Returns:
         - covariance_matrix: The covariance matrix as gamma^2 * Lambda^(-1).
         """
-        lambda_matrix = self.calculate_lambda_matrix()
+        # Check if the covariance matrix has been calculated
+        if self.lambda_matrix is None:
+            self.calculate_lambda_matrix()
+
+        inverse_lambda = pinv(self.lambda_matrix)    
 
         # Covariance matrix is gamma^2 * Λ^(-1)
-        self.covariance_matrix = self.gamma ** 2 * pinv(lambda_matrix)
+        self.covariance_matrix = self.gamma ** 2 * (inverse_lambda + inverse_lambda.T) / 2
         return self.covariance_matrix
 
     def sample_smooth_surfaces(
