@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.special import roots_genlaguerre
 from numpy.linalg import pinv
+from rbf_volatility_surface import RBFVolatilitySurface
 
 
 class RBFQuadraticSmoothnessPrior:
@@ -11,7 +12,7 @@ class RBFQuadraticSmoothnessPrior:
         maturity_std,
         strike_std,
         n_roots,
-        gamma,
+        smoothness_controller,
         random_state=None,
     ):
         """
@@ -23,7 +24,7 @@ class RBFQuadraticSmoothnessPrior:
         - maturity_std: Standard deviation for time to maturity.
         - strike_std: Standard deviation for strike prices.
         - n_roots: Number of roots for Generalized Gauss-Laguerre Quadrature.
-        - gamma: Smoothness control parameter.
+        - smoothness_controller: Smoothness control parameter.
         - random_state: Random seed for reproducibility.
         """
         self.maturity_times = np.array(maturity_times)
@@ -31,7 +32,7 @@ class RBFQuadraticSmoothnessPrior:
         self.maturity_std = maturity_std
         self.strike_std = strike_std
         self.n_roots = n_roots
-        self.gamma = gamma
+        self.smoothness_controller = smoothness_controller
         self.random_generator = np.random.default_rng(random_state)
 
         # Precompute the roots and weights for the generalized Gauss-Laguerre quadrature with α = -1/2
@@ -179,7 +180,6 @@ class RBFQuadraticSmoothnessPrior:
                 if j != k:
                     lambda_matrix[k, j] = lambda_matrix[j, k]  # Use symmetry
 
-        lambda_matrix[lambda_matrix < 1e-12] = 0
         lambda_matrix += 1e-6 * np.eye(lambda_matrix.shape[0])
 
         # Eigenvalue decomposition
@@ -211,7 +211,7 @@ class RBFQuadraticSmoothnessPrior:
         inverse_lambda = pinv(self.lambda_matrix)    
 
         # Covariance matrix is gamma^2 * Λ^(-1)
-        self.covariance_matrix = self.gamma ** 2 * (inverse_lambda + inverse_lambda.T) / 2
+        self.covariance_matrix = self.smoothness_controller ** 2 * (inverse_lambda + inverse_lambda.T) / 2
         return self.covariance_matrix
 
     def sample_smooth_surfaces(
@@ -239,3 +239,73 @@ class RBFQuadraticSmoothnessPrior:
         )
 
         return samples
+
+    def log_likelihood(
+        self,
+        data_implied_volatilities,
+        data_maturity_times,
+        data_strike_prices,
+        risk_free_rate,
+        underlying_price,
+        noise_level=0.0,
+    ):
+        """
+        Calculate the log-likelihood of the observed implied volatilities based on the smoothness prior.
+
+        Parameters:
+        - data_implied_volatilities: Array of observed implied volatilities.
+        - data_maturity_times: Array of maturity times for the data.
+        - data_strike_prices: Array of strike prices for the data.
+        - risk_free_rate: Risk-free interest rate.
+        - underlying_price: Current price of the underlying asset.
+        - noise_level: Noise level in the observations, default is 0.
+
+        Returns:
+        - log_likelihood_value: The log-likelihood value based on the provided data and smoothness parameter.
+        """
+        # Number of data points
+        num_data_points = len(data_implied_volatilities)
+
+        # If the lambda matrix is not calculated, calculate it
+        if self.lambda_matrix is None:
+            self.calculate_lambda_matrix()
+
+        # Calculate the constant term (constant_volatility) using the static method
+        constant_volatility = RBFVolatilitySurface.calculate_constant_volatility(
+            data_implied_volatilities=data_implied_volatilities,
+            data_maturity_times=data_maturity_times,
+            data_strike_prices=data_strike_prices,
+            risk_free_rate=risk_free_rate,
+            underlying_price=underlying_price,
+        )
+
+        # Expand dimensions to enable broadcasting
+        time_diff = (data_maturity_times[:, np.newaxis] - self.maturity_times[np.newaxis, :]) ** 2
+        strike_diff = (data_strike_prices[:, np.newaxis] - self.strike_prices[np.newaxis, :]) ** 2
+
+        # Compute the RBF values for all pairs of (data_maturity_times, data_strike_prices) and (maturity_times, strike_prices)
+        rbf_evaluations = np.exp(
+            -time_diff / (2 * self.maturity_std ** 2) - strike_diff / (2 * self.strike_std ** 2)
+        )
+
+        covariance_matrix = (
+            noise_level ** 2 * np.eye(num_data_points)
+            + self.smoothness_controller ** 2 * rbf_evaluations @ pinv(self.lambda_matrix) @ rbf_evaluations.T
+        )
+
+        # Calculate log determinant of the covariance matrix
+        log_det_covariance_matrix = np.linalg.slogdet(covariance_matrix)[1]
+
+        # Inverse of the covariance matrix
+        covariance_matrix_inv = pinv(covariance_matrix)
+
+        # Calculate the difference between the observed volatilities and the constant volatility
+        volatility_difference = data_implied_volatilities - constant_volatility
+
+        # Calculate the log-likelihood
+        log_likelihood_value = (
+            -num_data_points / 2 * np.log(2 * np.pi) - 0.5 * log_det_covariance_matrix
+            - 0.5 * volatility_difference.T @ covariance_matrix_inv @ volatility_difference
+        )
+
+        return log_likelihood_value

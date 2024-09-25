@@ -116,7 +116,7 @@ def generate_sabr_call_options(
         f_i = forward_price(underlying_price, t_i, risk_free_rate)
 
         # Step 2: Calculate the implied volatility using the SABR model
-        implied_vol = sabr_implied_volatility(f_i, k_i, t_i, alpha, beta, rho, nu)
+        implied_vol = sabr_implied_volatility(f_i, k_i, t_i, alpha, beta, rho, nu) 
 
         # Step 3: Calculate the Black-Scholes call option price
         call_price = black_scholes_call_price(
