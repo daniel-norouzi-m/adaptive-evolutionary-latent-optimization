@@ -1,4 +1,7 @@
 import numpy as np
+import torch
+from torch.utils.data import Dataset
+from itertools import product
 
 
 class RBFVolatilitySurface:
@@ -29,7 +32,6 @@ class RBFVolatilitySurface:
         self.maturity_std = maturity_std
         self.constant_volatility = constant_volatility
 
-
     def implied_volatility_surface(
         self, 
         time_to_maturity, 
@@ -55,6 +57,45 @@ class RBFVolatilitySurface:
         # Volatility surface σ(T, K) = φ_0 + Σ_j ω_j φ_j(T, K)
         return self.constant_volatility + rbf_sum
 
+    def implied_volatility_tensor(
+        self, 
+        time_to_maturity_tensor, 
+        strike_price_tensor
+    ):
+        """
+        Calculate the implied volatility surface at given tensors of time to maturity and strike prices
+        in the PyTorch environment, ensuring correct device handling.
+
+        Parameters:
+        - time_to_maturity_tensor: Tensor of times to maturity.
+        - strike_price_tensor: Tensor of strike prices.
+
+        Returns:
+        - Tensor of implied volatilities, placed on the same device as the input tensors.
+        """
+        # Ensure that the tensors are on the same device as the inputs
+        device = time_to_maturity_tensor.device
+
+        # Move numpy arrays to torch tensors on the appropriate device
+        maturity_times_tensor = torch.tensor(self.maturity_times, device=device)
+        strike_prices_tensor = torch.tensor(self.strike_prices, device=device)
+        coefficients_tensor = torch.tensor(self.coefficients, device=device)
+
+        # Compute RBF values for each time-to-maturity and strike price in the tensor
+        rbf_values = torch.exp(
+            -((time_to_maturity_tensor.unsqueeze(-1) - maturity_times_tensor) ** 2) / (2 * self.maturity_std ** 2)
+            -((strike_price_tensor.unsqueeze(-1) - strike_prices_tensor) ** 2) / (2 * self.strike_std ** 2)
+        )
+        print(time_to_maturity_tensor.shape)
+        print((time_to_maturity_tensor.unsqueeze(-1) - maturity_times_tensor).shape)
+        print(time_to_maturity_tensor)
+        print((time_to_maturity_tensor.unsqueeze(-1) - maturity_times_tensor))
+
+        # Compute the weighted sum of the RBF values
+        rbf_sum = torch.matmul(rbf_values, coefficients_tensor)
+
+        # Compute the implied volatility: constant volatility + RBF sum
+        return self.constant_volatility + rbf_sum    
 
     @staticmethod
     def calculate_constant_volatility(
@@ -93,3 +134,109 @@ class RBFVolatilitySurface:
         constant_volatility = np.sum(weighted_volatilities) / np.sum(weights)
         return constant_volatility
 
+
+class SurfaceDataset(Dataset):
+    def __init__(
+        self, 
+        sampled_surface_coefficients, 
+        maturity_time_list, 
+        strike_price_list, 
+        strike_std, 
+        maturity_std, 
+        constant_volatility, 
+        strike_infinity
+    ):
+        """
+        Initialize the SurfaceDataset class.
+
+        Parameters:
+        - sampled_surface_coefficients: 2D NumPy array where each row is a set of surface coefficients.
+        - maturity_time_list: List of unique maturity times for PDE and boundary points.
+        - strike_price_list: List of unique strike prices for PDE and boundary points.
+        - strike_std: Standard deviation for strike prices in the RBF.
+        - maturity_std: Standard deviation for maturity times in the RBF.
+        - constant_volatility: Constant volatility term φ_0.
+        - strike_infinity: A large strike price used for the boundary condition at infinity.
+        """
+        # Store the parameters
+        self.sampled_surface_coefficients = sampled_surface_coefficients
+        self.maturity_time_list = maturity_time_list
+        self.strike_price_list = strike_price_list
+        self.strike_std = strike_std
+        self.maturity_std = maturity_std
+        self.constant_volatility = constant_volatility
+        self.strike_infinity = strike_infinity
+
+        # Create the full data grid of points
+        self.time_to_maturity, self.strike_price = self._create_data_grid()
+
+    def _create_data_grid(self):
+        """
+        Create the grid of time-to-maturity and strike price points for PDE and boundary points.
+        This will be used to create the full dataset for training the PINN.
+
+        Returns:
+        - time_to_maturity: Tensor of time to maturity points.
+        - strike_price: Tensor of strike price points.
+        """
+        # Create the product grids for PDE and boundary conditions
+        pde_grid = list(product(self.maturity_time_list, self.strike_price_list))
+        boundary_maturity_zero = list(product([0], self.strike_price_list))
+        boundary_strike_zero = list(product(self.maturity_time_list, [0]))
+        boundary_strike_infinity = list(product(self.maturity_time_list, [self.strike_infinity]))
+
+        # Combine all the points into a single list
+        combined_grid = (
+            pde_grid
+            + boundary_maturity_zero
+            + boundary_strike_zero
+            + boundary_strike_infinity
+        )
+
+        # Extract time to maturity and strike price values from the combined grid
+        time_to_maturity, strike_price = zip(*combined_grid)
+
+        # Convert to PyTorch tensors
+        time_to_maturity_tensor = torch.tensor(time_to_maturity, dtype=torch.float32, requires_grad=True)
+        strike_price_tensor = torch.tensor(strike_price, dtype=torch.float32, requires_grad=True)
+
+        return time_to_maturity_tensor, strike_price_tensor
+
+    def __len__(self):
+        """
+        Return the number of samples (number of surfaces).
+        """
+        return len(self.sampled_surface_coefficients)
+
+    def __getitem__(self, idx):
+        """
+        Get a single sample from the dataset.
+
+        Parameters:
+        - idx: Index of the sampled surface coefficients.
+
+        Returns:
+        - A tuple of tensors (time_to_maturity, strike_price, implied_volatility).
+        """
+        # Get the surface coefficients for the sampled surface
+        coefficients = self.sampled_surface_coefficients[idx]
+
+        # Initialize the RBFVolatilitySurface for the current sample
+        rbf_surface = RBFVolatilitySurface(
+            coefficients=coefficients,
+            maturity_times=self.maturity_time_list,
+            strike_prices=self.strike_price_list,
+            strike_std=self.strike_std,
+            maturity_std=self.maturity_std,
+            constant_volatility=self.constant_volatility
+        )
+
+        # Disable gradient tracking while computing the implied volatility tensor
+        with torch.no_grad():
+            implied_volatility_tensor = rbf_surface.implied_volatility_tensor(
+                self.time_to_maturity.detach(),  # detach to ensure grads are not tracked
+                self.strike_price.detach()       # detach to ensure grads are not tracked
+            )
+
+        # Return the tensors needed for training (time_to_maturity, strike_price, implied_volatility)
+        return self.time_to_maturity, self.strike_price, implied_volatility_tensor

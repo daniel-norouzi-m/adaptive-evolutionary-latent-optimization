@@ -309,3 +309,63 @@ class RBFQuadraticSmoothnessPrior:
         )
 
         return log_likelihood_value
+
+    def square_root_expected_squared_frobenius_norm(
+        self,
+        data_implied_volatilities,
+        data_maturity_times,
+        data_strike_prices,
+        risk_free_rate,
+        underlying_price
+    ):
+        """
+        Calculate the square root of the expected squared Frobenius norm of the volatility surface.
+
+        Parameters:
+        - data_implied_volatilities: Array of observed implied volatilities.
+        - data_maturity_times: Array of maturity times for the data.
+        - data_strike_prices: Array of strike prices for the data.
+        - risk_free_rate: Risk-free interest rate.
+        - underlying_price: Current price of the underlying asset.
+
+        Returns:
+        - sqrt_expected_frobenius_norm: The square root of the expected Frobenius norm squared.
+        """
+        # Number of data points
+        num_data_points = len(data_implied_volatilities)
+
+        # If the lambda matrix is not calculated, calculate it
+        if self.lambda_matrix is None:
+            self.calculate_lambda_matrix()
+
+        # Calculate the constant term (constant_volatility) using the static method
+        constant_volatility = RBFVolatilitySurface.calculate_constant_volatility(
+            data_implied_volatilities=data_implied_volatilities,
+            data_maturity_times=data_maturity_times,
+            data_strike_prices=data_strike_prices,
+            risk_free_rate=risk_free_rate,
+            underlying_price=underlying_price,
+        )
+
+        # Expand dimensions to enable broadcasting
+        time_diff = (data_maturity_times[:, np.newaxis] - self.maturity_times[np.newaxis, :]) ** 2
+        strike_diff = (data_strike_prices[:, np.newaxis] - self.strike_prices[np.newaxis, :]) ** 2
+
+        # Compute the RBF values for all pairs of (data_maturity_times, data_strike_prices) and (maturity_times, strike_prices)
+        rbf_evaluations = np.exp(
+            -time_diff / (2 * self.maturity_std ** 2) - strike_diff / (2 * self.strike_std ** 2)
+        )
+
+        # Compute the expected squared Frobenius norm
+        trace_term = np.trace(
+            rbf_evaluations.T @ rbf_evaluations @ pinv(self.lambda_matrix)
+        )
+        expected_squared_frobenius_norm = (
+            constant_volatility ** 2 * num_data_points
+            + self.smoothness_controller ** 2 * trace_term
+        )
+
+        # Return the square root of the expected squared Frobenius norm
+        sqrt_expected_squared_frobenius_norm = np.sqrt(expected_squared_frobenius_norm)
+
+        return sqrt_expected_squared_frobenius_norm
