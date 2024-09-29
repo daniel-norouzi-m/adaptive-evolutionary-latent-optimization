@@ -17,13 +17,13 @@ class CallOptionPINN(nn.Module):
     ):
         super(CallOptionPINN, self).__init__()
 
-        # Save normalization parameters
-        self.maturity_min = maturity_min
-        self.maturity_max = maturity_max
-        self.strike_min = strike_min
-        self.strike_max = strike_max
-        self.volatility_mean = volatility_mean
-        self.volatility_std = volatility_std
+        # Convert constants to tensors and register as buffers
+        self.register_buffer('maturity_min', torch.tensor(maturity_min, dtype=torch.float32))
+        self.register_buffer('maturity_max', torch.tensor(maturity_max, dtype=torch.float32))
+        self.register_buffer('strike_min', torch.tensor(strike_min, dtype=torch.float32))
+        self.register_buffer('strike_max', torch.tensor(strike_max, dtype=torch.float32))
+        self.register_buffer('volatility_mean', torch.tensor(volatility_mean, dtype=torch.float32))
+        self.register_buffer('volatility_std', torch.tensor(volatility_std, dtype=torch.float32))
 
         # Define the layers of the network
         layers = []
@@ -51,41 +51,47 @@ class CallOptionPINN(nn.Module):
         strike_price, 
         volatility
     ):
+        # Ensure constants are on the same device and dtype
+        maturity_min = self.maturity_min.to(time_to_maturity.device).type_as(
+            time_to_maturity
+        )
+        maturity_max = self.maturity_max.to(time_to_maturity.device).type_as(
+            time_to_maturity
+        )
+        strike_min = self.strike_min.to(strike_price.device).type_as(strike_price)
+        strike_max = self.strike_max.to(strike_price.device).type_as(strike_price)
+        volatility_mean = self.volatility_mean.to(volatility.device).type_as(volatility)
+        volatility_std = self.volatility_std.to(volatility.device).type_as(volatility)
+
         # Normalize the inputs:
-
-        # Time to maturity and strike price normalization (uniform normalization)
-        time_to_maturity_norm = (
-            time_to_maturity - self.maturity_min) / (
-            self.maturity_max - self.maturity_min
+        time_to_maturity_norm = (time_to_maturity - maturity_min) / (maturity_max - maturity_min)
+        strike_price_norm = (strike_price - strike_min) / (strike_max - strike_min)
+        volatility_standardized = (volatility - volatility_mean) / volatility_std
+        sqrt_2 = torch.sqrt(
+            torch.tensor(
+                2.0,
+                device=volatility_standardized.device,
+                dtype=volatility_standardized.dtype,
+            )
         )
-
-        strike_price_norm = (
-            strike_price - self.strike_min) / (
-            self.strike_max - self.strike_min
-        )
-
-        # Volatility normalization (using CDF of the normal distribution)
-        volatility_standardized = (
-            volatility - self.volatility_mean
-        ) / self.volatility_std
         volatility_norm = 0.5 * (
-            1 + torch.erf(volatility_standardized / torch.sqrt(torch.tensor(2.0)))
+            1 + torch.erf(volatility_standardized / sqrt_2).float()
         )
 
         # Concatenate inputs for the network
         inputs = torch.cat(
             [
-                time_to_maturity_norm.unsqueeze(1),
-                strike_price_norm.unsqueeze(1),
-                volatility_norm.unsqueeze(1),
+                time_to_maturity_norm.unsqueeze(-1),
+                strike_price_norm.unsqueeze(-1),
+                volatility_norm.unsqueeze(-1),
             ],
-            dim=1,
+            dim=-1,
         )
 
         # Pass through the network
         call_option_price = self.network(inputs)
 
-        return call_option_price
+        return call_option_price.squeeze(-1)
 
 
 def pinn_dupire_loss(
@@ -115,100 +121,64 @@ def pinn_dupire_loss(
     - strike_zero_loss: The average loss for the boundary condition at K=0 across all batches.
     - strike_infinity_loss: The average loss for the boundary condition as K→∞ (approximated by strike_infinity) across all batches.
     """
+    # Convert constants to tensors
+    risk_free_rate = torch.tensor(risk_free_rate, device=call_option_price.device, dtype=call_option_price.dtype)
+    underlying_price = torch.tensor(underlying_price, device=call_option_price.device, dtype=call_option_price.dtype)
+    strike_infinity = torch.tensor(strike_infinity, device=call_option_price.device, dtype=call_option_price.dtype)
 
-    # Initialize loss accumulators
-    total_pde_loss = 0.0
-    total_maturity_zero_loss = 0.0
-    total_strike_zero_loss = 0.0
-    total_strike_infinity_loss = 0.0
+    # Create masks
+    maturity_zero_mask = (time_to_maturity == 0).float()
+    strike_zero_mask = (strike_price == 0).float()
+    strike_infinity_mask = (strike_price == strike_infinity).float()
 
-    # Iterate over each batch
-    batch_size = call_option_price.shape[0]
-    for batch_idx in range(batch_size):
-        # Select individual batch
-        call_option_price_b = call_option_price[batch_idx]
-        time_to_maturity_b = time_to_maturity[batch_idx]
-        strike_price_b = strike_price[batch_idx]
-        volatility_b = volatility[batch_idx]
+    # Compute first derivatives
+    call_price_t = torch.autograd.grad(
+        call_option_price.sum(),
+        time_to_maturity,
+        create_graph=True,
+    )[0]
 
-        # Dupire Forward PDE Loss:
-        # Mask to exclude boundary points (non-boundary data)
-        non_boundary_mask = (
-            (time_to_maturity_b > 0) & (strike_price_b > 0) & (strike_price_b < strike_infinity)
-        )
+    call_price_k = torch.autograd.grad(
+        call_option_price.sum(),
+        strike_price,
+        create_graph=True,
+    )[0]
 
-        # Masked tensors for non-boundary data
-        time_to_maturity_nb = time_to_maturity_b[non_boundary_mask]
-        strike_price_nb = strike_price_b[non_boundary_mask]
-        volatility_nb = volatility_b[non_boundary_mask]
-        call_option_price_nb = call_option_price_b[non_boundary_mask]
+    # Compute second derivative
+    call_price_k2 = torch.autograd.grad(
+        call_price_k.sum(),
+        strike_price,
+        create_graph=True,
+    )[0]
 
-        # Compute the derivatives for the non-boundary points
-        call_price_t = torch.autograd.grad(
-            call_option_price_nb.sum(),
-            time_to_maturity_nb,
-            create_graph=True,
-        )[0]
+    # Compute PDE residuals
+    pde_residual = (
+        call_price_t
+        + 0.5 * volatility ** 2 * strike_price ** 2 * call_price_k2
+        + risk_free_rate * strike_price * call_price_k
+        - risk_free_rate * call_option_price
+    )
 
-        call_price_k = torch.autograd.grad(
-            call_option_price_nb.sum(),
-            strike_price_nb,
-            create_graph=True,
-        )[0]
+    # Compute PDE loss
+    pde_loss = torch.mean(pde_residual ** 2)
 
-        call_price_k2 = torch.autograd.grad(
-            call_price_k.sum(),
-            strike_price_nb,
-            create_graph=True,
-        )[0]
+    # Compute boundary condition residuals
+    maturity_zero_residual = (
+        call_option_price
+        - torch.clamp(underlying_price - strike_price, min=0)
+    ) * maturity_zero_mask
 
-        # Dupire PDE residuals for non-boundary points
-        pde_residual = (
-            call_price_t
-            + 0.5 * volatility_nb ** 2 * strike_price_nb ** 2 * call_price_k2
-            + risk_free_rate * strike_price_nb * call_price_k
-            - risk_free_rate * call_option_price_nb
-        )
+    strike_zero_residual = (
+        call_option_price - underlying_price
+    ) * strike_zero_mask
 
-        # Sum of squared residuals for the non-boundary data
-        pde_loss = torch.sum(pde_residual ** 2)
+    strike_infinity_residual = (
+        call_option_price
+    ) * strike_infinity_mask
 
-        # Accumulate total PDE loss
-        total_pde_loss += pde_loss
+    # Compute boundary condition losses
+    maturity_zero_loss = torch.mean(maturity_zero_residual ** 2)
+    strike_zero_loss = torch.mean(strike_zero_residual ** 2)
+    strike_infinity_loss = torch.mean(strike_infinity_residual ** 2)
 
-        # Direct comparisons for T=0 and K=0 boundaries
-        maturity_zero_mask = (time_to_maturity_b == 0)
-        strike_zero_mask = (strike_price_b == 0)
-        strike_infinity_mask = (strike_price_b == strike_infinity)
-
-        # Boundary Condition Loss at T=0 (Maturity)
-        maturity_zero_loss = torch.sum(
-            (
-                call_option_price_b[maturity_zero_mask]
-                - torch.clamp(underlying_price - strike_price_b[maturity_zero_mask], min=0)
-            )
-            ** 2
-        )
-
-        # Boundary Condition Loss at K=0 (Zero Strike Price)
-        strike_zero_loss = torch.sum(
-            (call_option_price_b[strike_zero_mask] - underlying_price) ** 2
-        )
-
-        # Boundary Condition Loss as K→∞ (High Strike Price)
-        strike_infinity_loss = torch.sum(
-            (call_option_price_b[strike_infinity_mask] - 0) ** 2
-        )
-
-        # Accumulate total boundary condition losses
-        total_maturity_zero_loss += maturity_zero_loss
-        total_strike_zero_loss += strike_zero_loss
-        total_strike_infinity_loss += strike_infinity_loss
-
-    # Average the losses across batches
-    avg_pde_loss = total_pde_loss / batch_size
-    avg_maturity_zero_loss = total_maturity_zero_loss / batch_size
-    avg_strike_zero_loss = total_strike_zero_loss / batch_size
-    avg_strike_infinity_loss = total_strike_infinity_loss / batch_size
-
-    return avg_pde_loss, avg_maturity_zero_loss, avg_strike_zero_loss, avg_strike_infinity_loss
+    return pde_loss, maturity_zero_loss, strike_zero_loss, strike_infinity_loss

@@ -82,20 +82,18 @@ class RBFVolatilitySurface:
         coefficients_tensor = torch.tensor(self.coefficients, device=device)
 
         # Compute RBF values for each time-to-maturity and strike price in the tensor
+        # This operation will broadcast time_to_maturity_tensor and strike_price_tensor against all RBF centers
         rbf_values = torch.exp(
             -((time_to_maturity_tensor.unsqueeze(-1) - maturity_times_tensor) ** 2) / (2 * self.maturity_std ** 2)
             -((strike_price_tensor.unsqueeze(-1) - strike_prices_tensor) ** 2) / (2 * self.strike_std ** 2)
         )
-        print(time_to_maturity_tensor.shape)
-        print((time_to_maturity_tensor.unsqueeze(-1) - maturity_times_tensor).shape)
-        print(time_to_maturity_tensor)
-        print((time_to_maturity_tensor.unsqueeze(-1) - maturity_times_tensor))
 
-        # Compute the weighted sum of the RBF values
-        rbf_sum = torch.matmul(rbf_values, coefficients_tensor)
+        # Compute the weighted sum of the RBF values across all centers using the coefficients
+        # Perform a weighted sum across the last dimension (axis -1) to aggregate the RBF values for each input point
+        rbf_sum = torch.sum(rbf_values * coefficients_tensor, dim=-1)
 
         # Compute the implied volatility: constant volatility + RBF sum
-        return self.constant_volatility + rbf_sum    
+        return self.constant_volatility + rbf_sum
 
     @staticmethod
     def calculate_constant_volatility(
@@ -168,7 +166,7 @@ class SurfaceDataset(Dataset):
         self.strike_infinity = strike_infinity
 
         # Create the full data grid of points
-        self.time_to_maturity, self.strike_price = self._create_data_grid()
+        self._create_data_grid()
 
     def _create_data_grid(self):
         """
@@ -176,8 +174,7 @@ class SurfaceDataset(Dataset):
         This will be used to create the full dataset for training the PINN.
 
         Returns:
-        - time_to_maturity: Tensor of time to maturity points.
-        - strike_price: Tensor of strike price points.
+        - None.
         """
         # Create the product grids for PDE and boundary conditions
         pde_grid = list(product(self.maturity_time_list, self.strike_price_list))
@@ -195,12 +192,9 @@ class SurfaceDataset(Dataset):
 
         # Extract time to maturity and strike price values from the combined grid
         time_to_maturity, strike_price = zip(*combined_grid)
+        self.pde_time_to_maturity, self.pde_strike_price = zip(*pde_grid)
 
-        # Convert to PyTorch tensors
-        time_to_maturity_tensor = torch.tensor(time_to_maturity, dtype=torch.float32, requires_grad=True)
-        strike_price_tensor = torch.tensor(strike_price, dtype=torch.float32, requires_grad=True)
-
-        return time_to_maturity_tensor, strike_price_tensor
+        self.time_to_maturity, self.strike_price = time_to_maturity, strike_price
 
     def __len__(self):
         """
@@ -221,11 +215,15 @@ class SurfaceDataset(Dataset):
         # Get the surface coefficients for the sampled surface
         coefficients = self.sampled_surface_coefficients[idx]
 
+        # Convert to PyTorch tensors
+        time_to_maturity_tensor = torch.tensor(self.time_to_maturity, dtype=torch.float32, requires_grad=True)
+        strike_price_tensor = torch.tensor(self.strike_price, dtype=torch.float32, requires_grad=True)
+
         # Initialize the RBFVolatilitySurface for the current sample
         rbf_surface = RBFVolatilitySurface(
             coefficients=coefficients,
-            maturity_times=self.maturity_time_list,
-            strike_prices=self.strike_price_list,
+            maturity_times=self.pde_time_to_maturity,
+            strike_prices=self.pde_strike_price,
             strike_std=self.strike_std,
             maturity_std=self.maturity_std,
             constant_volatility=self.constant_volatility
@@ -234,9 +232,9 @@ class SurfaceDataset(Dataset):
         # Disable gradient tracking while computing the implied volatility tensor
         with torch.no_grad():
             implied_volatility_tensor = rbf_surface.implied_volatility_tensor(
-                self.time_to_maturity.detach(),  # detach to ensure grads are not tracked
-                self.strike_price.detach()       # detach to ensure grads are not tracked
+                time_to_maturity_tensor.detach(),  # detach to ensure grads are not tracked
+                strike_price_tensor.detach()       # detach to ensure grads are not tracked
             )
 
         # Return the tensors needed for training (time_to_maturity, strike_price, implied_volatility)
-        return self.time_to_maturity, self.strike_price, implied_volatility_tensor
+        return time_to_maturity_tensor, strike_price_tensor, implied_volatility_tensor
