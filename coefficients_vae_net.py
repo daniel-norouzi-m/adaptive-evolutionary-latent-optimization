@@ -159,7 +159,7 @@ def coefficients_beta_vae_loss(
         # Compute the reconstruction loss (mean squared error between true and reconstructed coefficients)
         # Reduction is 'none' so we compute MSE per batch sample and then average
         reconstruction_loss = F.mse_loss(reconstructed_surface_coefficients, surface_coefficients, reduction='none')
-        reconstruction_loss = reconstruction_loss.mean(dim=1)  # Compute the mean MSE per batch sample
+        reconstruction_loss = reconstruction_loss.sum(dim=1)  # Compute the mean MSE per batch sample
         reconstruction_loss = reconstruction_loss.mean()  # Average across the batch
 
         # Compute the KL divergence between q(z|ω) and p(z)

@@ -224,3 +224,111 @@ class DupirePINNTrainer:
             loss_history=self.fine_tune_loss_history,
             experiment_name=experiment_name,
         )
+
+    def pre_train_with_sampling(
+        self, 
+        smoothness_prior, 
+        experiment_name=None
+    ):
+        """
+        Pre-train the PINN model with sampling from the smoothness prior.
+
+        Parameters:
+        - smoothness_prior: An instance of the RBFQuadraticSmoothnessPrior class used to sample surface coefficients.
+        - experiment_name: If provided, logs will be recorded in TensorBoard with this experiment name.
+        """
+        self.pre_train_loss_history = {
+            "PDE Loss": [],
+            "Zero Maturity Loss": [],
+            "Zero Strike Loss": [],
+            "Infinity Strike Loss": [],
+            "Total Loss": [],
+        }
+
+        # Setup SummaryWriter for TensorBoard logging
+        writer = SummaryWriter(log_dir=f"runs/{experiment_name}") if experiment_name else None
+
+        # Begin pre-training with sampling at each epoch
+        for epoch in range(self.pre_train_epochs):
+            # Sample surface coefficients from the smoothness prior for this epoch
+            sampled_surface_coefficients = smoothness_prior.sample_smooth_surfaces(self.batch_size)
+
+            # Create a dataset from the sampled surface coefficients
+            dataset = SurfaceDataset(
+                sampled_surface_coefficients=sampled_surface_coefficients,
+                maturity_time_list=self.maturity_time_list,
+                strike_price_list=self.strike_price_list,
+                strike_std=self.strike_std,
+                maturity_std=self.maturity_std,
+                constant_volatility=self.constant_volatility,
+                strike_infinity=self.strike_infinity,
+            )
+
+            # Take the entire dataset (no batching) for this epoch
+            dataloader = DataLoader(dataset, batch_size=self.batch_size)
+
+            # Iterate through the entire dataset (no batching, only one batch)
+            for batch_idx, (time_to_maturity, strike_price, implied_volatility) in enumerate(dataloader):
+                # Move data to the appropriate device
+                time_to_maturity = time_to_maturity.to(self.device)
+                strike_price = strike_price.to(self.device)
+                implied_volatility = implied_volatility.to(self.device)
+
+                # Zero gradients before backpropagation
+                self.pre_train_optimizer.zero_grad()
+
+                # Forward pass through the model to get call option price predictions
+                call_option_price = self.model(time_to_maturity, strike_price, implied_volatility)
+
+                # Compute the PDE and boundary condition losses
+                pde_loss, maturity_zero_loss, strike_zero_loss, strike_infinity_loss = pinn_dupire_loss(
+                    call_option_price,
+                    time_to_maturity,
+                    strike_price,
+                    implied_volatility,
+                    strike_infinity=self.strike_infinity,
+                )
+
+                # Compute total loss with coefficients
+                total_loss = (
+                    self.pde_loss_coefficient * pde_loss
+                    + self.maturity_zero_loss_coefficient * maturity_zero_loss
+                    + self.strike_zero_loss_coefficient * strike_zero_loss
+                    + self.strike_infinity_loss_coefficient * strike_infinity_loss
+                )
+
+                # Backpropagation and optimization
+                total_loss.backward()
+                self.pre_train_optimizer.step()
+
+                # Update loss dictionary
+                self.pre_train_loss_history["PDE Loss"].append(pde_loss.item())
+                self.pre_train_loss_history["Zero Maturity Loss"].append(maturity_zero_loss.item())
+                self.pre_train_loss_history["Zero Strike Loss"].append(strike_zero_loss.item())
+                self.pre_train_loss_history["Infinity Strike Loss"].append(strike_infinity_loss.item())
+                self.pre_train_loss_history["Total Loss"].append(total_loss.item())
+
+                # Print the losses for this epoch
+                current_loss = {
+                    "PDE Loss": pde_loss.item(),
+                    "Zero Maturity Loss": maturity_zero_loss.item(),
+                    "Zero Strike Loss": strike_zero_loss.item(),
+                    "Infinity Strike Loss": strike_infinity_loss.item(),
+                    "Total Loss": total_loss.item(),
+                }
+
+                # Print the losses
+                print(f"Epoch {epoch + 1}/{self.pre_train_epochs}, Losses: {current_loss}")
+
+                # Log losses in TensorBoard
+                if writer:
+                    writer.add_scalar("PDE Loss", pde_loss.item(), epoch)
+                    writer.add_scalar("Zero Maturity Loss", maturity_zero_loss.item(), epoch)
+                    writer.add_scalar("Zero Strike Loss", strike_zero_loss.item(), epoch)
+                    writer.add_scalar("Infinity Strike Loss", strike_infinity_loss.item(), epoch)
+                    writer.add_scalar("Total Loss", total_loss.item(), epoch)
+
+        # Close TensorBoard writer
+        if writer:
+            writer.close()
+    
