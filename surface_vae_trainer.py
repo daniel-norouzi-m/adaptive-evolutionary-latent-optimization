@@ -3,6 +3,7 @@ from torch.utils.tensorboard import SummaryWriter
 from coefficients_vae_net import CoefficientsVAE, CoefficientsDataset, coefficients_beta_vae_loss
 from torch.optim import Adam
 import torch
+from tqdm import tqdm
 
 
 class SurfaceVAETrainer:
@@ -70,7 +71,7 @@ class SurfaceVAETrainer:
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
 
         # Begin training
-        for epoch in range(n_epochs):
+        for epoch in tqdm(range(n_epochs)):
             for batch_idx, batch_surface_coefficients in enumerate(dataloader):
                 # Move data to the appropriate device
                 batch_surface_coefficients = batch_surface_coefficients.to(self.device)
@@ -194,7 +195,7 @@ class SurfaceVAETrainer:
         writer = SummaryWriter(log_dir=f"runs/{experiment_name}") if experiment_name else None
 
         # Begin training
-        for epoch in range(self.pre_train_epochs):
+        for epoch in tqdm(range(self.pre_train_epochs)):
             for batch_idx in range(1):
                 # Sample surface coefficients from the smoothness prior
                 sampled_surface_coefficients = smoothness_prior.sample_smooth_surfaces(self.batch_size)
@@ -228,12 +229,12 @@ class SurfaceVAETrainer:
                 self.pre_train_loss_history["Total Loss"].append(total_loss.item())
 
                 # Print the losses for each batch
-                current_loss = {
-                    "Reconstruction Loss": reconstruction_loss.item(),
-                    "KL Loss": kl_divergence.item(),
-                    "Total Loss": total_loss.item(),
-                }
-                print(f"Epoch {epoch + 1}/{self.pre_train_epochs}, Batch {batch_idx + 1}, Losses: {current_loss}")
+                # current_loss = {
+                #     "Reconstruction Loss": reconstruction_loss.item(),
+                #     "KL Loss": kl_divergence.item(),
+                #     "Total Loss": total_loss.item(),
+                # }
+                # print(f"Epoch {epoch + 1}/{self.pre_train_epochs}, Batch {batch_idx + 1}, Losses: {current_loss}")
 
                 # Log losses in TensorBoard
                 if writer:
@@ -245,3 +246,75 @@ class SurfaceVAETrainer:
         if writer:
             writer.close()
         
+    def dupire_price_prediction_loss(
+        self,
+        surface_coefficients_batch,
+        data_call_option_prices=None,
+        data_maturity_times=None,
+        data_strike_prices=None
+    ):
+        """
+        Calculate the price prediction loss for a batch of surface coefficients.
+
+        Parameters:
+        - surface_coefficients_batch: A batch of surface coefficients with shape (batch, N).
+        - data_call_option_prices: Observed call option prices. If provided, set the corresponding attribute.
+        - data_maturity_times: Maturity times corresponding to the observed call option prices.
+        - data_strike_prices: Strike prices corresponding to the observed call option prices.
+
+        Returns:
+        - mse_loss: The mean squared error (MSE) loss between the predicted and observed call option prices.
+        """
+
+        # Set class attributes if provided
+        if data_call_option_prices is not None:
+            self.data_call_option_prices = torch.tensor(data_call_option_prices, dtype=torch.float32, device=self.device)
+        if data_maturity_times is not None:
+            self.data_maturity_times = torch.tensor(data_maturity_times, dtype=torch.float32, device=self.device)
+        if data_strike_prices is not None:
+            self.data_strike_prices = torch.tensor(data_strike_prices, dtype=torch.float32, device=self.device)
+
+        # Ensure that RBF evaluations are computed if not already cached
+        if not hasattr(self, 'rbf_evaluations') or self.rbf_evaluations is None:
+            # Expand dimensions to enable broadcasting and compute RBF evaluations
+            time_diff = (self.data_maturity_times[:, None] - torch.tensor(self.maturity_times, device=self.device)) ** 2
+            strike_diff = (self.data_strike_prices[:, None] - torch.tensor(self.strike_prices, device=self.device)) ** 2
+
+            # rbf_evaluations: (M, N)
+            self.rbf_evaluations = torch.exp(
+                -time_diff / (2 * self.maturity_std ** 2)
+                - strike_diff / (2 * self.strike_std ** 2)
+            )
+
+        # surface_coefficients_batch: (batch_size, N)
+
+        # Compute the predicted volatilities for each surface coefficients batch
+        predicted_volatility_batch = torch.matmul(surface_coefficients_batch, self.rbf_evaluations.T) + self.constant_volatility
+
+        # Now predict the call option prices using the PINN for each batch element
+        # Repeat the maturity and strike tensors across the batch dimension
+        repeated_maturity_times = self.data_maturity_times.unsqueeze(0).repeat(surface_coefficients_batch.size(0), 1)
+        repeated_strike_prices = self.data_strike_prices.unsqueeze(0).repeat(surface_coefficients_batch.size(0), 1)
+
+        # Pass through the model
+        predicted_call_option_prices = self.model(
+            repeated_maturity_times,  # Shape: (batch_size, M)
+            repeated_strike_prices,   # Shape: (batch_size, M)
+            predicted_volatility_batch  # Shape: (batch_size, M)
+        )
+
+        # We now have predicted_call_option_prices of shape (batch_size, M)
+
+        # Ensure that the observed prices are of the correct shape
+        repeated_observed_prices = self.data_call_option_prices.unsqueeze(0).expand_as(predicted_call_option_prices)
+
+        # Compute the squared differences between predicted and observed call option prices
+        squared_errors = (predicted_call_option_prices - repeated_observed_prices) ** 2
+
+        # Sum the squared errors over the M points (along the second dimension)
+        sum_squared_errors_per_batch = torch.sum(squared_errors, dim=1)  # Shape: (batch_size,)
+
+        # Compute the sum of the summed squared errors across the batch
+        mse_loss = torch.sum(sum_squared_errors_per_batch)  # Final scalar loss
+
+        return mse_loss

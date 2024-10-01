@@ -4,6 +4,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from call_option_net import CallOptionPINN, pinn_dupire_loss
 from rbf_volatility_surface import SurfaceDataset
+from tqdm import tqdm
 
 class DupirePINNTrainer:
     def __init__(
@@ -103,7 +104,7 @@ class DupirePINNTrainer:
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
 
         # Begin training
-        for epoch in range(n_epochs):
+        for epoch in tqdm(range(n_epochs)):
             for batch_idx, (time_to_maturity, strike_price, implied_volatility) in enumerate(dataloader):
                 # Move data to the appropriate device
                 time_to_maturity = time_to_maturity.to(self.device)
@@ -144,16 +145,16 @@ class DupirePINNTrainer:
                 loss_history["Infinity Strike Loss"].append(strike_infinity_loss.item())
                 loss_history["Total Loss"].append(total_loss.item())
 
-                current_loss = {
-                    "PDE Loss": pde_loss.item(),
-                    "Zero Maturity Loss": maturity_zero_loss.item(),
-                    "Zero Strike Loss": strike_zero_loss.item(),
-                    "Infinity Strike Loss": strike_infinity_loss.item(),
-                    "Total Loss": total_loss.item(),
-                }
+                # current_loss = {
+                #     "PDE Loss": pde_loss.item(),
+                #     "Zero Maturity Loss": maturity_zero_loss.item(),
+                #     "Zero Strike Loss": strike_zero_loss.item(),
+                #     "Infinity Strike Loss": strike_infinity_loss.item(),
+                #     "Total Loss": total_loss.item(),
+                # }
 
-                # Print the losses for each batch
-                print(f"Epoch {epoch + 1}/{n_epochs}, Batch {batch_idx + 1}, Losses: {current_loss}")
+                # # Print the losses for each batch
+                # print(f"Epoch {epoch + 1}/{n_epochs}, Batch {batch_idx + 1}, Losses: {current_loss}")
 
                 # Log losses in TensorBoard
                 if writer:
@@ -249,7 +250,7 @@ class DupirePINNTrainer:
         writer = SummaryWriter(log_dir=f"runs/{experiment_name}") if experiment_name else None
 
         # Begin pre-training with sampling at each epoch
-        for epoch in range(self.pre_train_epochs):
+        for epoch in tqdm(range(self.pre_train_epochs)):
             # Sample surface coefficients from the smoothness prior for this epoch
             sampled_surface_coefficients = smoothness_prior.sample_smooth_surfaces(self.batch_size)
 
@@ -308,17 +309,17 @@ class DupirePINNTrainer:
                 self.pre_train_loss_history["Infinity Strike Loss"].append(strike_infinity_loss.item())
                 self.pre_train_loss_history["Total Loss"].append(total_loss.item())
 
-                # Print the losses for this epoch
-                current_loss = {
-                    "PDE Loss": pde_loss.item(),
-                    "Zero Maturity Loss": maturity_zero_loss.item(),
-                    "Zero Strike Loss": strike_zero_loss.item(),
-                    "Infinity Strike Loss": strike_infinity_loss.item(),
-                    "Total Loss": total_loss.item(),
-                }
+                # # Print the losses for this epoch
+                # current_loss = {
+                #     "PDE Loss": pde_loss.item(),
+                #     "Zero Maturity Loss": maturity_zero_loss.item(),
+                #     "Zero Strike Loss": strike_zero_loss.item(),
+                #     "Infinity Strike Loss": strike_infinity_loss.item(),
+                #     "Total Loss": total_loss.item(),
+                # }
 
-                # Print the losses
-                print(f"Epoch {epoch + 1}/{self.pre_train_epochs}, Losses: {current_loss}")
+                # # Print the losses
+                # print(f"Epoch {epoch + 1}/{self.pre_train_epochs}, Losses: {current_loss}")
 
                 # Log losses in TensorBoard
                 if writer:
