@@ -5,6 +5,7 @@ from torch.utils.tensorboard import SummaryWriter
 from call_option_net import CallOptionPINN, pinn_dupire_loss
 from rbf_volatility_surface import SurfaceDataset
 from tqdm import tqdm
+from itertools import product
 
 class DupirePINNTrainer:
     def __init__(
@@ -115,6 +116,7 @@ class DupirePINNTrainer:
                 optimizer.zero_grad()
 
                 # Forward pass through the model to get call option price predictions
+                self.model.train()
                 call_option_price = self.model(time_to_maturity, strike_price, implied_volatility)
 
                 # Compute the PDE and boundary condition losses
@@ -279,6 +281,7 @@ class DupirePINNTrainer:
                 self.pre_train_optimizer.zero_grad()
 
                 # Forward pass through the model to get call option price predictions
+                self.model.train()
                 call_option_price = self.model(time_to_maturity, strike_price, implied_volatility)
 
                 # Compute the PDE and boundary condition losses
@@ -333,3 +336,114 @@ class DupirePINNTrainer:
         if writer:
             writer.close()
     
+    def save_model(
+        self, 
+        path='models/pinn_model.pth'
+    ):
+        """
+        Save the neural network model to a specified file path.
+
+        Parameters:
+        - path: The file path to save the model (including the file name, e.g., "model.pth").
+        """
+        torch.save(self.model.state_dict(), path)
+        print(f"PINN Model saved to {path}.")
+
+    def load_model(
+        self, 
+        path='models/pinn_model.pth'
+    ):
+        """
+        Load the neural network model from a specified file path.
+
+        Parameters:
+        - path: The file path from which to load the model (e.g., "model.pth").
+        """
+        self.model.load_state_dict(torch.load(path, map_location=self.device))
+        self.model.to(self.device)  # Ensure the model is moved to the correct device after loading
+        print(f"PINN Model loaded from {path}.")
+
+    def dupire_price_prediction_loss(
+        self,
+        surface_coefficients_batch,
+        data_call_option_prices=None,
+        data_maturity_times=None,
+        data_strike_prices=None
+    ):
+        """
+        Calculate the price prediction loss for a batch of surface coefficients.
+
+        Parameters:
+        - surface_coefficients_batch: A batch of surface coefficients with shape (batch, N).
+        - data_call_option_prices: Observed call option prices. If provided, set the corresponding attribute.
+        - data_maturity_times: Maturity times corresponding to the observed call option prices.
+        - data_strike_prices: Strike prices corresponding to the observed call option prices.
+
+        Returns:
+        - mse_loss: The mean squared error (MSE) loss between the predicted and observed call option prices.
+        """
+
+        # Set class attributes if provided
+        if data_call_option_prices is not None:
+            self.data_call_option_prices = torch.tensor(data_call_option_prices, dtype=torch.float32, device=self.device)
+        if data_maturity_times is not None:
+            self.data_maturity_times = torch.tensor(data_maturity_times, dtype=torch.float32, device=self.device)
+        if data_strike_prices is not None:
+            self.data_strike_prices = torch.tensor(data_strike_prices, dtype=torch.float32, device=self.device)
+
+        # Ensure that RBF evaluations are computed if not already cached
+        if not hasattr(self, 'rbf_evaluations') or self.rbf_evaluations is None:
+            pde_grid = list(product(self.maturity_time_list, self.strike_price_list))
+            maturity_times, strike_prices = zip(*pde_grid)
+
+            # Expand dimensions to enable broadcasting and compute RBF evaluations
+            time_diff = (self.data_maturity_times[:, None] - torch.tensor(maturity_times, device=self.device)) ** 2
+            strike_diff = (self.data_strike_prices[:, None] - torch.tensor(strike_prices, device=self.device)) ** 2
+
+            # rbf_evaluations: (M, N)
+            self.rbf_evaluations = torch.exp(
+                -time_diff / (2 * self.maturity_std ** 2)
+                - strike_diff / (2 * self.strike_std ** 2)
+            ).float()
+
+        # surface_coefficients_batch: (batch_size, N)
+
+        # Compute the predicted volatilities for each surface coefficients batch
+        predicted_volatility_batch = torch.matmul(surface_coefficients_batch, self.rbf_evaluations.T) + self.constant_volatility
+
+        # Now predict the call option prices using the PINN for each batch element
+        # Repeat the maturity and strike tensors across the batch dimension
+        repeated_maturity_times = self.data_maturity_times.unsqueeze(0).repeat(surface_coefficients_batch.size(0), 1)
+        repeated_strike_prices = self.data_strike_prices.unsqueeze(0).repeat(surface_coefficients_batch.size(0), 1)
+
+        # Set the model to evaluation mode
+        self.model.eval()
+
+        # Disable gradient tracking for model parameters
+        requires_grad_backup = [param.requires_grad for param in self.model.parameters()]
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        # Pass through the model
+        predicted_call_option_prices = self.model(
+            repeated_maturity_times,  # Shape: (batch_size, M)
+            repeated_strike_prices,   # Shape: (batch_size, M)
+            predicted_volatility_batch  # Shape: (batch_size, M)
+        )
+
+        # Restore the original requires_grad state for model parameters
+        for param, requires_grad in zip(self.model.parameters(), requires_grad_backup):
+            param.requires_grad = requires_grad
+
+        # We now have predicted_call_option_prices of shape (batch_size, M)
+
+        # Ensure that the observed prices are of the correct shape
+        repeated_observed_prices = self.data_call_option_prices.unsqueeze(0).expand_as(predicted_call_option_prices)
+
+        # Compute the squared differences between predicted and observed call option prices
+        squared_errors = (predicted_call_option_prices - repeated_observed_prices) ** 2
+
+        # Sum the squared errors over the M points (along the second dimension)
+        sum_squared_errors_batch = torch.sum(squared_errors, dim=1)  # Shape: (batch_size,)
+
+        return sum_squared_errors_batch       

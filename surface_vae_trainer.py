@@ -80,6 +80,7 @@ class SurfaceVAETrainer:
                 optimizer.zero_grad()
 
                 # Forward pass through the VAE model
+                self.model.train()
                 reconstructed_surface_coefficients, latent_mean, latent_log_var = self.model(batch_surface_coefficients)
 
                 # Compute the beta-VAE loss
@@ -207,6 +208,7 @@ class SurfaceVAETrainer:
                 self.pre_train_optimizer.zero_grad()
 
                 # Forward pass through the VAE model
+                self.model.train()
                 reconstructed_surface_coefficients, latent_mean, latent_log_var = self.model(sampled_surface_coefficients)
 
                 # Compute the beta-VAE loss
@@ -245,76 +247,30 @@ class SurfaceVAETrainer:
         # Close TensorBoard writer
         if writer:
             writer.close()
-        
-    def dupire_price_prediction_loss(
-        self,
-        surface_coefficients_batch,
-        data_call_option_prices=None,
-        data_maturity_times=None,
-        data_strike_prices=None
+
+    def save_model(
+        self, 
+        path='models/vae_model.pth'
     ):
         """
-        Calculate the price prediction loss for a batch of surface coefficients.
+        Save the neural network model to a specified file path.
 
         Parameters:
-        - surface_coefficients_batch: A batch of surface coefficients with shape (batch, N).
-        - data_call_option_prices: Observed call option prices. If provided, set the corresponding attribute.
-        - data_maturity_times: Maturity times corresponding to the observed call option prices.
-        - data_strike_prices: Strike prices corresponding to the observed call option prices.
-
-        Returns:
-        - mse_loss: The mean squared error (MSE) loss between the predicted and observed call option prices.
+        - path: The file path to save the model (including the file name, e.g., "model.pth").
         """
+        torch.save(self.model.state_dict(), path)
+        print(f"VAE Model saved to {path}.")
 
-        # Set class attributes if provided
-        if data_call_option_prices is not None:
-            self.data_call_option_prices = torch.tensor(data_call_option_prices, dtype=torch.float32, device=self.device)
-        if data_maturity_times is not None:
-            self.data_maturity_times = torch.tensor(data_maturity_times, dtype=torch.float32, device=self.device)
-        if data_strike_prices is not None:
-            self.data_strike_prices = torch.tensor(data_strike_prices, dtype=torch.float32, device=self.device)
+    def load_model(
+        self, 
+        path='models/vae_model.pth'
+    ):
+        """
+        Load the neural network model from a specified file path.
 
-        # Ensure that RBF evaluations are computed if not already cached
-        if not hasattr(self, 'rbf_evaluations') or self.rbf_evaluations is None:
-            # Expand dimensions to enable broadcasting and compute RBF evaluations
-            time_diff = (self.data_maturity_times[:, None] - torch.tensor(self.maturity_times, device=self.device)) ** 2
-            strike_diff = (self.data_strike_prices[:, None] - torch.tensor(self.strike_prices, device=self.device)) ** 2
-
-            # rbf_evaluations: (M, N)
-            self.rbf_evaluations = torch.exp(
-                -time_diff / (2 * self.maturity_std ** 2)
-                - strike_diff / (2 * self.strike_std ** 2)
-            )
-
-        # surface_coefficients_batch: (batch_size, N)
-
-        # Compute the predicted volatilities for each surface coefficients batch
-        predicted_volatility_batch = torch.matmul(surface_coefficients_batch, self.rbf_evaluations.T) + self.constant_volatility
-
-        # Now predict the call option prices using the PINN for each batch element
-        # Repeat the maturity and strike tensors across the batch dimension
-        repeated_maturity_times = self.data_maturity_times.unsqueeze(0).repeat(surface_coefficients_batch.size(0), 1)
-        repeated_strike_prices = self.data_strike_prices.unsqueeze(0).repeat(surface_coefficients_batch.size(0), 1)
-
-        # Pass through the model
-        predicted_call_option_prices = self.model(
-            repeated_maturity_times,  # Shape: (batch_size, M)
-            repeated_strike_prices,   # Shape: (batch_size, M)
-            predicted_volatility_batch  # Shape: (batch_size, M)
-        )
-
-        # We now have predicted_call_option_prices of shape (batch_size, M)
-
-        # Ensure that the observed prices are of the correct shape
-        repeated_observed_prices = self.data_call_option_prices.unsqueeze(0).expand_as(predicted_call_option_prices)
-
-        # Compute the squared differences between predicted and observed call option prices
-        squared_errors = (predicted_call_option_prices - repeated_observed_prices) ** 2
-
-        # Sum the squared errors over the M points (along the second dimension)
-        sum_squared_errors_per_batch = torch.sum(squared_errors, dim=1)  # Shape: (batch_size,)
-
-        # Compute the sum of the summed squared errors across the batch
-        mse_loss = torch.sum(sum_squared_errors_per_batch)  # Final scalar loss
-
-        return mse_loss
+        Parameters:
+        - path: The file path from which to load the model (e.g., "model.pth").
+        """
+        self.model.load_state_dict(torch.load(path, map_location=self.device))
+        self.model.to(self.device)  # Ensure the model is moved to the correct device after loading
+        print(f"VAE Model loaded from {path}.")
