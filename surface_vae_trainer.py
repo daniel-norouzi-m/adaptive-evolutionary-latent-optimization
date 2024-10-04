@@ -102,15 +102,15 @@ class SurfaceVAETrainer:
                 loss_history["KL Loss"].append(kl_divergence.item())
                 loss_history["Total Loss"].append(total_loss.item())
 
-                # Current loss dict
-                current_loss = {
-                    "Reconstruction Loss": reconstruction_loss.item(),
-                    "KL Loss": kl_divergence.item(),
-                    "Total Loss": total_loss.item(),
-                }
+                # # Current loss dict
+                # current_loss = {
+                #     "Reconstruction Loss": reconstruction_loss.item(),
+                #     "KL Loss": kl_divergence.item(),
+                #     "Total Loss": total_loss.item(),
+                # }
 
-                # Print the losses for each batch
-                print(f"Epoch {epoch + 1}/{n_epochs}, Batch {batch_idx + 1}, Losses: {current_loss}")
+                # # Print the losses for each batch
+                # print(f"Epoch {epoch + 1}/{n_epochs}, Batch {batch_idx + 1}, Losses: {current_loss}")
 
                 # Log losses in TensorBoard
                 if writer:
