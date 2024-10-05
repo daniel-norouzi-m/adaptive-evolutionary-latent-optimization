@@ -1,9 +1,6 @@
-import torch
-import numpy as np
 import plotly.graph_objects as go
 
 from evolutionary_algorithm import EvolutionaryAlgorithm
-from latent_dimension_assessment import sample_latent_vectors, latent_space_assessment
 
 class AdaptiveEvolutionaryLatentOptimization:
     def __init__(
@@ -15,6 +12,7 @@ class AdaptiveEvolutionaryLatentOptimization:
         mutation_strength,
         selection_pressure_parameter,
         n_generations,
+        truncation_clip,
         n_cycles,
     ):
         """
@@ -28,6 +26,7 @@ class AdaptiveEvolutionaryLatentOptimization:
         - mutation_strength: Mutation strength parameter for the EA.
         - selection_pressure_parameter: Selection pressure parameter for the EA.
         - n_generations: Number of generations per EA optimization cycle.
+        - truncation_clip: Factor for clipping the latent vectors based on the latent prior's eigenvalues.
         - n_cycles: Number of adaptive cycles.
         """
         self.vae_trainer = vae_trainer
@@ -37,13 +36,11 @@ class AdaptiveEvolutionaryLatentOptimization:
         self.mutation_strength = mutation_strength
         self.selection_pressure_parameter = selection_pressure_parameter
         self.n_generations = n_generations
+        self.truncation_clip = truncation_clip
         self.n_cycles = n_cycles
 
         # Histories for each cycle
         self.optimization_histories = []
-        self.landscape_median_condition_numbers = []
-        self.landscape_lipschitz_constants = []
-        self.population_median_condition_numbers = []
 
         # Placeholder for final population after the last cycle
         self.final_population = None
@@ -70,39 +67,13 @@ class AdaptiveEvolutionaryLatentOptimization:
                 population_size=self.population_size,
                 mutation_strength=self.mutation_strength,
                 selection_pressure_parameter=self.selection_pressure_parameter,
-                n_generations=self.n_generations
+                n_generations=self.n_generations,
+                truncation_clip=self.truncation_clip
             )
             ea_optimizer.optimize()
 
             # Store the final population and optimization history
             self.optimization_histories.append(ea_optimizer.optimization_history)
-
-            # # Assess the optimization landscape (condition numbers and Lipschitz constant)
-            # print("Assessing Optimization Landscape...")
-            # all_condition_numbers = []
-            # max_lipschitz_constant = float('-inf')
-
-            # # Assess latent space multiple times and update metrics
-            # for i in range(100):
-            #     torch.manual_seed(i + 2)  # Update seed for each iteration
-            #     latent_samples_batch = sample_latent_vectors(100, self.latent_diagonal)
-            #     condition_numbers, lipschitz_constant = latent_space_assessment(
-            #         latent_samples_batch, self.vae_trainer, self.pinn_trainer
-            #     )
-            #     all_condition_numbers.extend(condition_numbers)
-            #     max_lipschitz_constant = max(max_lipschitz_constant, lipschitz_constant)
-
-            # # Store median of the condition numbers and Lipschitz constant after fine-tuning
-            # self.landscape_median_condition_numbers.append(np.median(all_condition_numbers))
-            # self.landscape_lipschitz_constants.append(max_lipschitz_constant)
-
-            # # Assess the terminal population condition numbers
-            # print("Assessing Terminal Population...")
-            # terminal_population_samples = torch.tensor(ea_optimizer.population, dtype=torch.float32)
-            # terminal_condition_numbers, _ = latent_space_assessment(
-            #     terminal_population_samples, self.vae_trainer, self.pinn_trainer
-            # )
-            # self.population_median_condition_numbers.append(np.median(terminal_condition_numbers))
 
             # Update the final population with the current EA optimizer's population
             self.final_population = ea_optimizer.final_population
@@ -177,7 +148,7 @@ class AdaptiveEvolutionaryLatentOptimization:
 
         # Update layout to make the plot detailed and visually appealing
         fig.update_layout(
-            title="Evolutionary Optimization History Across All Cycles",
+            title="Adaptive Latent Evolutionary Optimization History Across All Cycles",
             xaxis_title="Generation",
             yaxis_title="Fitness Value",
             legend=dict(
@@ -190,4 +161,6 @@ class AdaptiveEvolutionaryLatentOptimization:
         )
 
         # Show the plot
-        fig.show()            
+        fig.show()           
+
+        fig.write_image('figs/adaptive_latent_evolutionary_optimization_history.png', format='png', scale=4, width=900, height=900) 

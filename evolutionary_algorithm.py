@@ -14,7 +14,8 @@ class EvolutionaryAlgorithm:
         population_size, 
         mutation_strength, 
         selection_pressure_parameter, 
-        n_generations
+        n_generations,
+        truncation_clip
     ):
         """
         Initialize the Evolutionary Algorithm class.
@@ -27,17 +28,22 @@ class EvolutionaryAlgorithm:
         - mutation_strength: Strength of the Gaussian mutation.
         - selection_pressure_parameter: Selection pressure parameter \( \eta \), controls the selection probability.
         - n_generations: Number of generations for the evolutionary optimization.
+        - truncation_clip: Factor for clipping the latent vectors based on the latent prior's eigenvalues.
         """
         self.vae_trainer = vae_trainer
         self.pinn_trainer = pinn_trainer
-        self.latent_diagonal = latent_diagonal
+        self.latent_diagonal = torch.tensor(latent_diagonal, dtype=torch.float32, device=self.vae_trainer.device)
         self.population_size = population_size
         self.mutation_strength = mutation_strength
         self.selection_pressure_parameter = selection_pressure_parameter
         self.n_generations = n_generations
+        self.truncation_clip = truncation_clip
 
         # Initialize the population by sampling from the latent prior distribution
-        self.population = sample_latent_vectors(self.population_size, self.latent_diagonal).to(self.vae_trainer.device)
+        self.population = sample_latent_vectors(self.population_size, latent_diagonal).to(self.vae_trainer.device)
+
+        # Clip the population to stay within bounds
+        self.clip_population()
 
         # Store optimization history (best/avg/0.05 percentile fitness at each generation)
         self.optimization_history = {
@@ -46,17 +52,34 @@ class EvolutionaryAlgorithm:
             "0.05 Percentile Fitness": []
         }
 
+    def clip_population(self):
+        """
+        Clip the population of latent vectors to ensure they stay within the defined bounds.
+
+        The bounds are determined by the truncation clip and the latent diagonal.
+        """
+        lower_bound = -self.truncation_clip * torch.sqrt(self.latent_diagonal)
+        upper_bound = self.truncation_clip * torch.sqrt(self.latent_diagonal)
+
+        # Clip the population to stay within the bounds
+        self.population = torch.clamp(self.population, lower_bound, upper_bound)
+
     def mutate(self):
         """
         Mutate latent vectors by adding Gaussian noise based on mutation strength.
-        Updates the population in place.
+        Updates the population in place and applies clipping.
         """
+        # Generate noise for mutation
         noise = self.mutation_strength * sample_latent_vectors(
-            self.population_size, 
-            self.latent_diagonal
+            self.population_size,
+            self.latent_diagonal.cpu().numpy()
         ).to(self.population.device)
         
+        # Apply mutation by adding noise to the population
         self.population = self.population + noise
+
+        # Clip the population to stay within bounds
+        self.clip_population()
 
     def crossover(self):
         """
