@@ -1,5 +1,10 @@
 # Ill-Posedness Evolved in the Deep: Adaptive Evolutionary Latent Optimization: An Application to Recovering Volatility
 
+
+<p align="center"> <img src="figs/adaptive_latent_evolutionary_optimization_history.png" alt="Optimization history" width="45%" /> <img src="figs/adaptive_evolutionary_optimization_top_surfaces.png" alt="Top 4 volatility surfaces" width="45%" /> </p>
+
+---
+
 ## Abstract
 
 Optimizing complex high-dimensional latent spaces is a fundamental challenge in fields such as quantitative finance, molecular design, and structured data modeling, particularly when addressing ill-posed inverse problems characterized by nonlinearity and implicit input-output relationships. We introduce **Adaptive Evolutionary Latent Optimization (AdELO)**, a novel framework that synergistically combines evolutionary algorithms with generative and objective models to iteratively refine latent space representations and solve complex optimization tasks. AdELO operates by alternating between evolutionary optimization of latent vectors and fine-tuning of both the generative and objective models, effectively navigating the latent space to discover optimal solutions. In our implementation, we utilize beta-Variational Autoencoders (beta-VAEs) to represent the latent space and Physics-Informed Neural Networks (PINNs) to enforce underlying physical laws. We apply AdELO to the recovery of local volatility surfaces from option prices, a quintessential ill-posed inverse problem in financial mathematics known for numerical instability and sensitivity to noise. The volatility surface is parameterized using Gaussian Radial Basis Functions (RBFs) with smoothness priors imposed to regularize the problem. By integrating beta-VAEs and PINNs within the AdELO framework, we effectively reconstruct the local volatility surface from market data. Experimental results demonstrate that AdELO successfully recovers volatility surfaces with high accuracy and stability, mitigating the ill-posedness inherent in the inverse problem. The proposed framework not only advances methodologies for volatility surface recovery but also offers a generalizable optimization paradigm applicable to a wide spectrum of complex, high-dimensional problems in science and engineering.
@@ -249,16 +254,6 @@ adelo.run_cycle()
 # Plot the optimization process
 adelo.plot_evolutions()
 ```
-
----
-
-## Optimization Results
-
-After running AdELO, we observe significant improvements in the recovery of the volatility surface.
-
-| Optimization history tracking price prediction loss during AdELO cycles | Top 4 volatility surfaces from the final terminal population after AdELO cycles |
-|:---:|:---:|
-| ![Optimization history](figs/adaptive_latent_evolutionary_optimization_history.png) | ![Top 4 volatility surfaces](figs/adaptive_evolutionary_optimization_top_surfaces.png) |
 
 ---
 
