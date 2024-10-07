@@ -11,12 +11,6 @@ Optimizing complex high-dimensional latent spaces is a fundamental challenge in 
 
 ---
 
-## Adaptive Evolutionary Latent Optimization (AdELO)
-
-Adaptive Evolutionary Latent Optimization (AdELO) is a novel, general-purpose algorithm that integrates generative models, such as VAEs, with evolutionary algorithms to optimize high-dimensional latent spaces for complex problem domains. The process begins by pre-training a latent decoder $g_\theta$, encoder $q_\phi$, and objective model $h_\psi$ on a structured prior dataset $\mathcal{D}$, thereby learning a latent space that encodes complex data. In each optimization cycle, an EA is employed to evolve a population of latent vectors sampled from a prior distribution $p(\mathbf{z})$, performing mutation, crossover, and selection mechanisms to optimize a given objective. The evolved latent vectors are decoded into the input space and evaluated via the objective model, such as a PINN. After every evolutionary generation, the models are fine-tuned based on the decoded terminal population to better capture the underlying data relationships. This alternating cycle of latent space exploration and model refinement repeats over multiple cycles, leading to convergence toward optimal solutions. AdELO is particularly effective for addressing complex optimization challenges in domains like molecular design and volatility surface modeling, where intricate input-output relationships require advanced optimization strategies.
-
-The detailed workflow of AdELO is outlined in the pseudocode below:
-
 ![AdELO Algorithm Pseudocode](figs/adelo_pseudocode.png)
 
 ---
