@@ -1,7 +1,6 @@
 # Ill-Posedness Evolved in the Deep: Adaptive Evolutionary Latent Optimization: An Application to Recovering Volatility
 
-
-<p align="center"> <img src="figs/adaptive_latent_evolutionary_optimization_history.png" alt="Optimization history" width="45%" /> <img src="figs/adaptive_evolutionary_optimization_top_surfaces.png" alt="Top 4 volatility surfaces" width="45%" /> </p>
+![AdELO Algorithm Pseudocode](figs/adelo.png)
 
 ---
 
@@ -11,7 +10,7 @@ Optimizing complex high-dimensional latent spaces is a fundamental challenge in 
 
 ---
 
-![AdELO Algorithm Pseudocode](figs/adelo_pseudocode.png)
+<p align="center"> <img src="figs/adaptive_latent_evolutionary_optimization_history.png" alt="Optimization history" width="45%" /> <img src="figs/adaptive_evolutionary_optimization_top_surfaces.png" alt="Top 4 volatility surfaces" width="45%" /> </p>
 
 ---
 
