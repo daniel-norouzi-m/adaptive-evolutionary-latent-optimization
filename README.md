@@ -258,6 +258,27 @@ Through AdELO, we effectively reconstruct the local volatility surface from mark
 
 ---
 
-Please refer to the [paper](link_to_paper_if_available) for detailed explanations and additional results.
+Please refer to the [paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4978973) for detailed explanations and additional results.
+
+If you find our research useful in your work, please consider citing it as follows:
+
+```bibtex
+@article{ariannorouzi2024ill,
+  title={Ill-Posedness Evolved in the Deep: Adaptive Evolutionary Latent Optimization, An Application to Recovering Volatility},
+  author={Arian, Hamid R and Norouzi M, Daniel},
+  journal={An Application to Recovering Volatility (October 07, 2024)},
+  year={2024}
+}
+```
+
+---
+
+This project is open-sourced under the MIT license.
+
+---
+
+For any queries regarding the research, please reach out to:
+- Daniel Norouzi M.
+  - Email: [norouzi@risklab.ai](mailto:norouzi@risklab.ai)
 
 ---
